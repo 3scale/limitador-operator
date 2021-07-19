@@ -18,22 +18,21 @@ package controllers
 
 import (
 	"context"
-	"github.com/3scale/limitador-operator/pkg/limitador"
-	"github.com/go-logr/logr"
-	v1 "k8s.io/api/apps/v1"
+	"fmt"
+
+	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
+	"github.com/3scale/limitador-operator/pkg/limitador"
+	"github.com/3scale/limitador-operator/pkg/reconcilers"
 )
 
 // LimitadorReconciler reconciles a Limitador object
 type LimitadorReconciler struct {
-	client.Client
-	Log    logr.Logger
-	Scheme *runtime.Scheme
+	*reconcilers.BaseReconciler
 }
 
 // +kubebuilder:rbac:groups=limitador.3scale.net,resources=limitadors,verbs=get;list;watch;create;update;patch;delete
@@ -41,12 +40,13 @@ type LimitadorReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;delete
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;delete
 
-func (r *LimitadorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
-	reqLogger := r.Log.WithValues("limitador", req.NamespacedName)
+func (r *LimitadorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	reqLogger := r.Logger().WithValues("limitador", req.NamespacedName)
+	reqLogger.V(1).Info("Reconciling Limitador")
 
 	// Delete Limitador deployment and service if needed
 	limitadorObj := &limitadorv1alpha1.Limitador{}
-	if err := r.Get(context.TODO(), req.NamespacedName, limitadorObj); err != nil {
+	if err := r.Client().Get(ctx, req.NamespacedName, limitadorObj); err != nil {
 		if errors.IsNotFound(err) {
 			// The deployment and the service should be deleted automatically
 			// because they have an owner ref to Limitador
@@ -62,13 +62,15 @@ func (r *LimitadorReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error) {
 		return ctrl.Result{}, nil
 	}
 
-	err := r.ensureLimitadorServiceExists(limitadorObj)
+	limitadorService := limitador.LimitadorService(limitadorObj)
+	err := r.ReconcileService(ctx, limitadorService, reconcilers.CreateOnlyMutator)
 	reqLogger.V(1).Info("reconcile service", "error", err)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	err = r.reconcileDeployment(limitador.LimitadorDeployment(limitadorObj))
+	deployment := limitador.LimitadorDeployment(limitadorObj)
+	err = r.ReconcileDeployment(ctx, deployment, mutateLimitadorDeployment)
 	reqLogger.V(1).Info("reconcile deployment", "error", err)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -83,52 +85,27 @@ func (r *LimitadorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *LimitadorReconciler) reconcileDeployment(desiredDeployment *v1.Deployment) error {
-	currentDeployment := v1.Deployment{}
-	key, _ := client.ObjectKeyFromObject(desiredDeployment)
-
-	err := r.Get(context.TODO(), key, &currentDeployment)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(context.TODO(), desiredDeployment)
-		} else {
-			return err
-		}
+func mutateLimitadorDeployment(existingObj, desiredObj client.Object) (bool, error) {
+	existing, ok := existingObj.(*appsv1.Deployment)
+	if !ok {
+		return false, fmt.Errorf("%T is not a *appsv1.Deployment", existingObj)
+	}
+	desired, ok := desiredObj.(*appsv1.Deployment)
+	if !ok {
+		return false, fmt.Errorf("%T is not a *appsv1.Deployment", desiredObj)
 	}
 
 	updated := false
 
-	if currentDeployment.Spec.Replicas != desiredDeployment.Spec.Replicas {
-		currentDeployment.Spec.Replicas = desiredDeployment.Spec.Replicas
+	if existing.Spec.Replicas != desired.Spec.Replicas {
+		existing.Spec.Replicas = desired.Spec.Replicas
 		updated = true
 	}
 
-	if currentDeployment.Spec.Template.Spec.Containers[0].Image !=
-		desiredDeployment.Spec.Template.Spec.Containers[0].Image {
-		currentDeployment.Spec.Template.Spec.Containers[0].Image =
-			desiredDeployment.Spec.Template.Spec.Containers[0].Image
+	if existing.Spec.Template.Spec.Containers[0].Image != desired.Spec.Template.Spec.Containers[0].Image {
+		existing.Spec.Template.Spec.Containers[0].Image = desired.Spec.Template.Spec.Containers[0].Image
 		updated = true
 	}
 
-	if updated {
-		return r.Update(context.TODO(), &currentDeployment)
-	} else {
-		return nil
-	}
-}
-
-func (r *LimitadorReconciler) ensureLimitadorServiceExists(limitadorObj *limitadorv1alpha1.Limitador) error {
-	limitadorService := limitador.LimitadorService(limitadorObj)
-	limitadorServiceKey, _ := client.ObjectKeyFromObject(limitadorService)
-
-	err := r.Get(context.TODO(), limitadorServiceKey, limitadorService)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			return r.Create(context.TODO(), limitadorService)
-		} else {
-			return err
-		}
-	}
-
-	return nil
+	return updated, nil
 }

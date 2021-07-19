@@ -2,17 +2,18 @@ package controllers
 
 import (
 	"context"
-	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
+	"sync"
+	"time"
+
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/ghttp"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/json"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sync"
-	"time"
+
+	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
 )
 
 var _ = Describe("RateLimit controller", func() {
@@ -56,10 +57,10 @@ var _ = Describe("RateLimit controller", func() {
 	// Wraps a function with the same signature as k8sClient.Create and waits
 	// for an HTTP request.
 	var runCreateAndWaitHTTPReq = func(f func(ctx context.Context,
-		object runtime.Object,
+		object client.Object,
 		opts ...client.CreateOption,
-	) error) func(ctx context.Context, object runtime.Object, opts ...client.CreateOption) error {
-		return func(ctx context.Context, object runtime.Object, opts ...client.CreateOption) error {
+	) error) func(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
+		return func(ctx context.Context, object client.Object, opts ...client.CreateOption) error {
 			reqsAtStart := len(mockedHTTPServer.ReceivedRequests())
 
 			err := f(ctx, object, opts...)
@@ -78,10 +79,10 @@ var _ = Describe("RateLimit controller", func() {
 	// Wraps a function with the same signature as k8sClient.Delete and waits
 	// for an HTTP request.
 	var runDeleteAndWaitHTTPReq = func(f func(ctx context.Context,
-		object runtime.Object,
+		object client.Object,
 		opts ...client.DeleteOption,
-	) error) func(ctx context.Context, object runtime.Object, opts ...client.DeleteOption) error {
-		return func(ctx context.Context, object runtime.Object, opts ...client.DeleteOption) error {
+	) error) func(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
+		return func(ctx context.Context, object client.Object, opts ...client.DeleteOption) error {
 			reqsAtStart := len(mockedHTTPServer.ReceivedRequests())
 
 			err := f(ctx, object, opts...)

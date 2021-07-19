@@ -29,6 +29,7 @@ import (
 
 	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
 	"github.com/3scale/limitador-operator/controllers"
+	"github.com/3scale/limitador-operator/pkg/reconcilers"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -67,22 +68,29 @@ func main() {
 		os.Exit(1)
 	}
 
-	rateLimitReconciler := controllers.NewRateLimitReconciler(
-		mgr.GetClient(),
-		ctrl.Log.WithName("controllers").WithName("RateLimit"),
-		mgr.GetScheme(),
+	rateLimitBaseReconciler := reconcilers.NewBaseReconciler(
+		mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(),
+		ctrl.Log.WithName("controllers").WithName("ratelimit"),
+		mgr.GetEventRecorderFor("RateLimit"),
 	)
-	if err = rateLimitReconciler.SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "RateLimit")
+
+	if err = (&controllers.RateLimitReconciler{
+		BaseReconciler: rateLimitBaseReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create RateLimit controller")
 		os.Exit(1)
 	}
 
+	limitadorBaseReconciler := reconcilers.NewBaseReconciler(
+		mgr.GetClient(), mgr.GetScheme(), mgr.GetAPIReader(),
+		ctrl.Log.WithName("controllers").WithName("limitador"),
+		mgr.GetEventRecorderFor("Limitador"),
+	)
+
 	if err = (&controllers.LimitadorReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers").WithName("Limitador"),
-		Scheme: mgr.GetScheme(),
+		BaseReconciler: limitadorBaseReconciler,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "Limitador")
+		setupLog.Error(err, "unable to create Limitador controller")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
