@@ -3,18 +3,31 @@ package limitador
 import (
 	"bytes"
 	"fmt"
-	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/util/json"
 	"net/http"
 	"net/url"
+
+	"k8s.io/apimachinery/pkg/util/json"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
+	"github.com/3scale/limitador-operator/pkg/helpers"
 )
 
 type Client struct {
-	url url.URL
+	httpClient *http.Client
+	url        url.URL
 }
 
 func NewClient(url url.URL) Client {
-	return Client{url: url}
+	var transport http.RoundTripper
+	if ctrl.Log.V(1).Enabled() {
+		transport = &helpers.VerboseTransport{}
+	}
+
+	return Client{
+		url:        url,
+		httpClient: &http.Client{Transport: transport},
+	}
 }
 
 func (client *Client) CreateLimit(rateLimitSpec *limitadorv1alpha1.RateLimitSpec) error {
@@ -23,7 +36,7 @@ func (client *Client) CreateLimit(rateLimitSpec *limitadorv1alpha1.RateLimitSpec
 		return err
 	}
 
-	_, err = http.Post(
+	_, err = client.httpClient.Post(
 		fmt.Sprintf("%s/limits", client.url.String()),
 		"application/json",
 		bytes.NewBuffer(jsonLimit),
@@ -49,8 +62,7 @@ func (client *Client) DeleteLimit(rateLimitSpec *limitadorv1alpha1.RateLimitSpec
 
 	req.Header.Add("Content-Type", "application/json")
 
-	httpClient := &http.Client{}
-	_, err = httpClient.Do(req)
+	_, err = client.httpClient.Do(req)
 
 	return err
 }

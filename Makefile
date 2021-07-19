@@ -75,7 +75,7 @@ generate: controller-gen
 	$(CONTROLLER_GEN) object:headerFile="hack/boilerplate.go.txt" paths="./..."
 
 # Build the docker image
-docker-build: test
+docker-build:
 	docker build . -t ${IMG}
 
 # Push the docker image
@@ -89,20 +89,10 @@ CONTROLLER_GEN = $(shell pwd)/bin/controller-gen
 controller-gen:
 	$(call go-get-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen@v0.4.1)
 
+# Download kustomize locally if necessary
+KUSTOMIZE = $(shell pwd)/bin/kustomize
 kustomize:
-ifeq (, $(shell which kustomize))
-	@{ \
-	set -e ;\
-	KUSTOMIZE_GEN_TMP_DIR=$$(mktemp -d) ;\
-	cd $$KUSTOMIZE_GEN_TMP_DIR ;\
-	go mod init tmp ;\
-	go get sigs.k8s.io/kustomize/kustomize/v3@v3.5.4 ;\
-	rm -rf $$KUSTOMIZE_GEN_TMP_DIR ;\
-	}
-KUSTOMIZE=$(GOBIN)/kustomize
-else
-KUSTOMIZE=$(shell which kustomize)
-endif
+	$(call go-get-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v3@v3.8.7)
 
 # Generate bundle manifests and metadata, then validate generated files.
 .PHONY: bundle
@@ -116,6 +106,33 @@ bundle: manifests kustomize
 .PHONY: bundle-build
 bundle-build:
 	docker build -f bundle.Dockerfile -t $(BUNDLE_IMG) .
+
+# Download kind locally if necessary
+KIND = $(shell pwd)/bin/kind
+kind:
+	$(call go-get-tool,$(KIND),sigs.k8s.io/kind@v0.10.0)
+
+KIND_CLUSTER_NAME = limitador-local
+
+.PHONY: local-setup
+local-setup: local-cleanup local-setup-kind docker-build
+	@echo "Deploying Kuadrant control plane"
+	$(KIND) load docker-image ${IMG} --name ${KIND_CLUSTER_NAME}
+	make deploy
+	kubectl -n default patch deployment controller-manager -p '{"spec": {"template": {"spec":{"containers":[{"name": "manager","image":"controller:latest"}]}}}}'
+	@echo "Wait for all deployments to be up"
+	kubectl -n default wait --timeout=300s --for=condition=Available deployments --all
+
+.PHONY: local-dev-setup
+local-dev-setup: local-cleanup local-setup-kind install run
+
+.PHONY: local-cleanup
+local-cleanup: kind
+	$(KIND) delete cluster --name $(KIND_CLUSTER_NAME)
+
+.PHONY: local-setup-kind
+local-setup-kind: kind
+	$(KIND) create cluster --name $(KIND_CLUSTER_NAME)
 
 # go-get-tool will 'go get' any package $2 and install it to $1.
 define go-get-tool
