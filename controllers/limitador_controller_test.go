@@ -2,7 +2,6 @@ package controllers
 
 import (
 	"context"
-	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -10,12 +9,16 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"time"
+
+	limitadorv1alpha1 "github.com/3scale/limitador-operator/api/v1alpha1"
+	"github.com/3scale/limitador-operator/pkg/limitador"
 )
 
 var _ = Describe("Limitador controller", func() {
 	const (
-		LimitadorName      = "limitador-test"
 		LimitadorNamespace = "default"
 		LimitadorReplicas  = 2
 		LimitadorImage     = "quay.io/3scale/limitador"
@@ -27,27 +30,37 @@ var _ = Describe("Limitador controller", func() {
 
 	replicas := LimitadorReplicas
 	version := LimitadorVersion
-	limitador := limitadorv1alpha1.Limitador{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Limitador",
-			APIVersion: "limitador.3scale.net/v1alpha1",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      LimitadorName,
-			Namespace: LimitadorNamespace,
-		},
-		Spec: limitadorv1alpha1.LimitadorSpec{
-			Replicas: &replicas,
-			Version:  &version,
-		},
+	newLimitador := func() *limitadorv1alpha1.Limitador {
+		// The name can't start with a number.
+		name := "a" + string(uuid.NewUUID())
+
+		return &limitadorv1alpha1.Limitador{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "Limitador",
+				APIVersion: "limitador.3scale.net/v1alpha1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: LimitadorNamespace,
+			},
+			Spec: limitadorv1alpha1.LimitadorSpec{
+				Replicas: &replicas,
+				Version:  &version,
+			},
+		}
 	}
 
+	deletePropagationPolicy := client.PropagationPolicy(metav1.DeletePropagationForeground)
+
 	Context("Creating a new Limitador object", func() {
+		var limitadorObj *limitadorv1alpha1.Limitador
+
 		BeforeEach(func() {
-			err := k8sClient.Delete(context.TODO(), limitador.DeepCopy())
+			limitadorObj = newLimitador()
+			err := k8sClient.Delete(context.TODO(), limitadorObj, deletePropagationPolicy)
 			Expect(err == nil || errors.IsNotFound(err))
 
-			Expect(k8sClient.Create(context.TODO(), limitador.DeepCopy())).Should(Succeed())
+			Expect(k8sClient.Create(context.TODO(), limitadorObj)).Should(Succeed())
 		})
 
 		It("Should create a new deployment with the right number of replicas and version", func() {
@@ -57,7 +70,7 @@ var _ = Describe("Limitador controller", func() {
 					context.TODO(),
 					types.NamespacedName{
 						Namespace: LimitadorNamespace,
-						Name:      LimitadorName,
+						Name:      limitadorObj.Name,
 					},
 					&createdLimitadorDeployment)
 
@@ -78,8 +91,8 @@ var _ = Describe("Limitador controller", func() {
 				err := k8sClient.Get(
 					context.TODO(),
 					types.NamespacedName{
-						Namespace: "default",   // Hardcoded for now
-						Name:      "limitador", // Hardcoded for now
+						Namespace: LimitadorNamespace,
+						Name:      limitador.ServiceName, // Hardcoded for now
 					},
 					&createdLimitadorService)
 
@@ -88,51 +101,15 @@ var _ = Describe("Limitador controller", func() {
 		})
 	})
 
-	Context("Deleting a Limitador object", func() {
-		BeforeEach(func() {
-			err := k8sClient.Create(context.TODO(), limitador.DeepCopy())
-			Expect(err == nil || errors.IsAlreadyExists(err))
-
-			Expect(k8sClient.Delete(context.TODO(), limitador.DeepCopy())).Should(Succeed())
-		})
-
-		It("Should delete the limitador deployment", func() {
-			createdLimitadorDeployment := appsv1.Deployment{}
-			Eventually(func() bool {
-				err := k8sClient.Get(
-					context.TODO(),
-					types.NamespacedName{
-						Namespace: LimitadorNamespace,
-						Name:      LimitadorName,
-					},
-					&createdLimitadorDeployment)
-
-				return errors.IsNotFound(err)
-			}, timeout, interval).Should(BeTrue())
-		})
-
-		It("Should delete the limitador service", func() {
-			createdLimitadorService := v1.Service{}
-			Eventually(func() bool {
-				err := k8sClient.Get(
-					context.TODO(),
-					types.NamespacedName{
-						Namespace: "default",   // Hardcoded for now
-						Name:      "limitador", // Hardcoded for now
-					},
-					&createdLimitadorService)
-
-				return errors.IsNotFound(err)
-			}, timeout, interval).Should(BeTrue())
-		})
-	})
-
 	Context("Updating a limitador object", func() {
+		var limitadorObj *limitadorv1alpha1.Limitador
+
 		BeforeEach(func() {
-			err := k8sClient.Delete(context.TODO(), limitador.DeepCopy())
+			limitadorObj = newLimitador()
+			err := k8sClient.Delete(context.TODO(), limitadorObj, deletePropagationPolicy)
 			Expect(err == nil || errors.IsNotFound(err))
 
-			Expect(k8sClient.Create(context.TODO(), limitador.DeepCopy())).Should(Succeed())
+			Expect(k8sClient.Create(context.TODO(), limitadorObj)).Should(Succeed())
 		})
 
 		It("Should modify the limitador deployment", func() {
@@ -142,7 +119,7 @@ var _ = Describe("Limitador controller", func() {
 					context.TODO(),
 					types.NamespacedName{
 						Namespace: LimitadorNamespace,
-						Name:      LimitadorName,
+						Name:      limitadorObj.Name,
 					},
 					&updatedLimitador)
 
@@ -161,7 +138,7 @@ var _ = Describe("Limitador controller", func() {
 					context.TODO(),
 					types.NamespacedName{
 						Namespace: LimitadorNamespace,
-						Name:      LimitadorName,
+						Name:      limitadorObj.Name,
 					},
 					&updatedLimitadorDeployment)
 
